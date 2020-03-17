@@ -54,9 +54,11 @@ get_list_schema = {
                             {"type": "number"},
                             {"type": "string"},
                             {"type": "boolean"},
+                            {"type": "array"},
                         ]
                     },
                 },
+                "required": ["col", "opr", "value"],
             },
         },
     },
