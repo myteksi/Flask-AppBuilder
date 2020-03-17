@@ -8,7 +8,8 @@ from flask import (
     make_response,
     redirect,
     request,
-    url_for
+    url_for,
+    abort
 )
 from flask_jwt_extended import verify_jwt_in_request
 from flask_login import current_user
@@ -128,13 +129,16 @@ def has_access(f):
                     self.__class__.__name__
                 )
             )
-            flash(as_unicode(FLAMSG_ERR_SEC_ACCESS_DENIED), "danger")
-        return redirect(
-            url_for(
-                self.appbuilder.sm.auth_view.__class__.__name__ + ".login",
-                next=request.url
-            )
-        )
+            if current_user.is_authenticated:
+                abort(404)
+            else:
+                flash(as_unicode(FLAMSG_ERR_SEC_ACCESS_DENIED), "danger")
+                return redirect(
+                    url_for(
+                        self.appbuilder.sm.auth_view.__class__.__name__ + ".login",
+                        next=request.url
+                    )
+                )
 
     f._permission_name = permission_str
     return functools.update_wrapper(wraps, f)
