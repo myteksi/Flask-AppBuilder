@@ -1,6 +1,22 @@
 Flask-AppBuilder ChangeLog
 ==========================
 
+Improvements and Bug fixes on 2.3.4
+-----------------------------------
+
+- Fix, [api] SQL selects and many to many joins (#1361)
+- Fix, [frontend] Revert "Bump jQuery to 3.5 (#1351)" (#1363)
+
+Improvements and Bug fixes on 2.3.3
+-----------------------------------
+
+- New, [cli] Fix, reset-password cli option (#1347)
+- New, Bump jQuery to 3.5 (#1351)
+- New, [menu] fix, add translation lookup in menu.get_data (#1352)
+- Fix, [menu] add translation lookup in menu.get_data (#1352)
+- Fix, [menu] translations on menu v2 (#1355)
+- Fix, [dependencies] include email_validator for new wtforms (#1360)
+
 Improvements and Bug fixes on 2.3.2
 -----------------------------------
 
