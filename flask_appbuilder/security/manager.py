@@ -215,6 +215,7 @@ class BaseSecurityManager(AbstractSecurityManager):
         # Self Registration
         app.config.setdefault("AUTH_USER_REGISTRATION", False)
         app.config.setdefault("AUTH_USER_REGISTRATION_ROLE", self.auth_role_public)
+        app.config.setdefault("AUTH_USER_REGISTRATION_ROLE_JMESPATH", None)
 
         # LDAP Config
         if self.auth_type == AUTH_LDAP:
@@ -246,14 +247,14 @@ class BaseSecurityManager(AbstractSecurityManager):
         if self.auth_type == AUTH_OID:
             self.oid = OpenID(app)
         if self.auth_type == AUTH_OAUTH:
-            from flask_oauthlib.client import OAuth
+            from authlib.integrations.flask_client import OAuth
 
-            self.oauth = OAuth()
+            self.oauth = OAuth(app)
             self.oauth_remotes = dict()
             for _provider in self.oauth_providers:
                 provider_name = _provider["name"]
                 log.debug("OAuth providers init {0}".format(provider_name))
-                obj_provider = self.oauth.remote_app(
+                obj_provider = self.oauth.register(
                     provider_name, **_provider["remote_app"]
                 )
                 obj_provider._tokengetter = self.oauth_tokengetter
@@ -346,6 +347,10 @@ class BaseSecurityManager(AbstractSecurityManager):
     @property
     def auth_user_registration_role(self):
         return self.appbuilder.get_app.config["AUTH_USER_REGISTRATION_ROLE"]
+
+    @property
+    def auth_user_registration_role_jmespath(self) -> str:
+        return self.appbuilder.get_app.config["AUTH_USER_REGISTRATION_ROLE_JMESPATH"]
 
     @property
     def auth_ldap_search(self):
@@ -505,34 +510,38 @@ class BaseSecurityManager(AbstractSecurityManager):
         # for GITHUB
         if provider == "github" or provider == "githublocal":
             me = self.appbuilder.sm.oauth_remotes[provider].get("user")
-            log.debug("User info from Github: {0}".format(me.data))
-            return {"username": "github_" + me.data.get("login")}
+            data = me.json()
+            log.debug("User info from Github: {0}".format(data))
+            return {"username": "github_" + data.get("login")}
         # for twitter
         if provider == "twitter":
             me = self.appbuilder.sm.oauth_remotes[provider].get("account/settings.json")
-            log.debug("User info from Twitter: {0}".format(me.data))
-            return {"username": "twitter_" + me.data.get("screen_name", "")}
+            data = me.json()
+            log.debug("User info from Twitter: {0}".format(data))
+            return {"username": "twitter_" + data.get("screen_name", "")}
         # for linkedin
         if provider == "linkedin":
             me = self.appbuilder.sm.oauth_remotes[provider].get(
                 "people/~:(id,email-address,first-name,last-name)?format=json"
             )
-            log.debug("User info from Linkedin: {0}".format(me.data))
+            data = me.json()
+            log.debug("User info from Linkedin: {0}".format(data))
             return {
-                "username": "linkedin_" + me.data.get("id", ""),
-                "email": me.data.get("email-address", ""),
-                "first_name": me.data.get("firstName", ""),
-                "last_name": me.data.get("lastName", ""),
+                "username": "linkedin_" + data.get("id", ""),
+                "email": data.get("email-address", ""),
+                "first_name": data.get("firstName", ""),
+                "last_name": data.get("lastName", ""),
             }
         # for Google
         if provider == "google":
             me = self.appbuilder.sm.oauth_remotes[provider].get("userinfo")
-            log.debug("User info from Google: {0}".format(me.data))
+            data = me.json()
+            log.debug("User info from Google: {0}".format(data))
             return {
-                "username": "google_" + me.data.get("id", ""),
-                "first_name": me.data.get("given_name", ""),
-                "last_name": me.data.get("family_name", ""),
-                "email": me.data.get("email", ""),
+                "username": "google_" + data.get("id", ""),
+                "first_name": data.get("given_name", ""),
+                "last_name": data.get("family_name", ""),
+                "email": data.get("email", ""),
             }
         # for Azure AD Tenant. Azure OAuth response contains
         # JWT token which has user info.
@@ -553,6 +562,14 @@ class BaseSecurityManager(AbstractSecurityManager):
                 "id": me["oid"],
                 "username": me["oid"],
             }
+        # for OpenShift
+        if provider == "openshift":
+            me = self.appbuilder.sm.oauth_remotes[provider].get(
+                "apis/user.openshift.io/v1/users/~"
+            )
+            data = me.json()
+            log.debug("User info from OpenShift: {0}".format(data))
+            return {"username": "openshift_" + data.get("metadata").get("name")}
         else:
             return {}
 
@@ -1020,12 +1037,19 @@ class BaseSecurityManager(AbstractSecurityManager):
             return None
         # User does not exist, create one if self registration.
         if not user:
+            role_name = self.auth_user_registration_role
+            if self.auth_user_registration_role_jmespath:
+                import jmespath
+
+                role_name = jmespath.search(
+                    self.auth_user_registration_role_jmespath, userinfo
+                )
             user = self.add_user(
                 username=userinfo["username"],
                 first_name=userinfo.get("first_name", ""),
                 last_name=userinfo.get("last_name", ""),
                 email=userinfo.get("email", ""),
-                role=self.find_role(self.auth_user_registration_role),
+                role=self.find_role(role_name),
             )
             if not user:
                 log.error("Error creating a new OAuth user %s" % userinfo["username"])
@@ -1089,7 +1113,7 @@ class BaseSecurityManager(AbstractSecurityManager):
             else:
                 db_role_ids.append(role.id)
 
-        # Then check against database-stored roles
+        # If it's not a builtin role check against database store roles
         return self.exist_permission_on_roles(view_name, permission_name, db_role_ids)
 
     def _get_user_permission_view_menus(

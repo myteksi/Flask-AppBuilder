@@ -39,6 +39,7 @@ from .const import (
     MAX_PAGE_SIZE,
     MODEL1_DATA_SIZE,
     MODEL2_DATA_SIZE,
+    MODELOMCHILD_DATA_SIZE,
     PASSWORD_ADMIN,
     PASSWORD_READONLY,
     USERNAME_ADMIN,
@@ -281,12 +282,20 @@ class APITestCase(FABTestCase):
             list_columns = ["field_string", "children.field_integer"]
             show_columns = ["field_string", "children.field_integer"]
 
+        self.modeldottedmmapi = ModelDottedMMApi
         self.appbuilder.add_api(ModelDottedMMApi)
 
         class ModelOMParentApi(ModelRestApi):
             datamodel = SQLAInterface(ModelOMParent)
 
         self.appbuilder.add_api(ModelOMParentApi)
+
+        class ModelDottedOMParentApi(ModelRestApi):
+            datamodel = SQLAInterface(ModelOMParent)
+            list_columns = ["field_string", "children.field_string"]
+            show_columns = ["field_string", "children.field_string"]
+
+        self.appbuilder.add_api(ModelDottedOMParentApi)
 
         class ModelMMRequiredApi(ModelRestApi):
             datamodel = SQLAInterface(ModelMMParentRequired)
@@ -329,6 +338,13 @@ class APITestCase(FABTestCase):
         self.model2apifilteredrelfields = Model2ApiFilteredRelFields
         self.appbuilder.add_api(Model2ApiFilteredRelFields)
 
+        class Model2CallableColApi(ModelRestApi):
+            datamodel = SQLAInterface(Model2)
+            list_columns = ["field_string", "field_integer", "field_method"]
+            show_columns = list_columns
+
+        self.appbuilder.add_api(Model2CallableColApi)
+
         class Model1PermOverride(ModelRestApi):
             datamodel = SQLAInterface(Model1)
             class_permission_name = "api"
@@ -358,9 +374,9 @@ class APITestCase(FABTestCase):
         self.appbuilder.add_api(Model1ApiIncludeRoutes)
 
     def tearDown(self):
-        self.appbuilder = None
-        self.app = None
-        self.db = None
+        self.appbuilder.get_session.close()
+        engine = self.db.session.get_bind(mapper=None, clause=None)
+        engine.dispose()
 
     def test_babel(self):
         """
@@ -444,7 +460,7 @@ class APITestCase(FABTestCase):
         token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
         # Test unauthorized DELETE
         pk = 1
-        uri = "api/v1/model1apirestrictedpermissions/{}".format(pk)
+        uri = f"api/v1/model1apirestrictedpermissions/{pk}"
         rv = self.auth_client_delete(client, token, uri)
         self.assertEqual(rv.status_code, 401)
         # Test unauthorized POST
@@ -458,7 +474,7 @@ class APITestCase(FABTestCase):
         rv = self.auth_client_post(client, token, uri, item)
         self.assertEqual(rv.status_code, 401)
         # Test authorized GET
-        uri = "api/v1/model1apirestrictedpermissions/1"
+        uri = f"api/v1/model1apirestrictedpermissions/{pk}"
         rv = self.auth_client_get(client, token, uri)
         self.assertEqual(rv.status_code, 200)
 
@@ -674,9 +690,9 @@ class APITestCase(FABTestCase):
             )
             self.assertEqual(rv.status_code, 200)
 
-    def test_get_item_dotted_notation(self):
+    def test_get_item_dotted_mo_notation(self):
         """
-            REST Api: Test get item with dotted notation
+            REST Api: Test get item with dotted M-O related field
         """
         client = self.app.test_client()
         token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
@@ -763,9 +779,9 @@ class APITestCase(FABTestCase):
         rv = self.auth_client_get(client, token, f"api/v1/model1apifiltered/{pk}")
         self.assertEqual(rv.status_code, 200)
 
-    def test_get_item_1m_field(self):
+    def test_get_item_mo_field(self):
         """
-            REST Api: Test get item with 1-N related field
+            REST Api: Test get item with M-O related field
         """
         client = self.app.test_client()
         token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
@@ -793,7 +809,7 @@ class APITestCase(FABTestCase):
 
     def test_get_item_mm_field(self):
         """
-            REST Api: Test get item with N-N related field
+            REST Api: Test get item with M-M related field
         """
         client = self.app.test_client()
         token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
@@ -812,7 +828,7 @@ class APITestCase(FABTestCase):
 
     def test_get_item_dotted_mm_field(self):
         """
-            REST Api: Test get item with dotted N-N related field
+            REST Api: Test get item with dotted M-M related field
         """
         client = self.app.test_client()
         token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
@@ -847,7 +863,8 @@ class APITestCase(FABTestCase):
         data = json.loads(rv.data.decode("utf-8"))
         self.assertEqual(rv.status_code, 200)
         expected_rel_field = [
-            {"field_string": f"text0.{i}", "id": i, "parent": 1} for i in range(1, 4)
+            {"field_string": f"text0.{i}", "id": i}
+            for i in range(1, MODELOMCHILD_DATA_SIZE)
         ]
         self.assertEqual(data[API_RESULT_RES_KEY]["children"], expected_rel_field)
 
@@ -866,9 +883,9 @@ class APITestCase(FABTestCase):
         # Tests data result default page size
         self.assertEqual(len(data[API_RESULT_RES_KEY]), self.model1api.page_size)
 
-    def test_get_list_dotted_notation(self):
+    def test_get_list_dotted_mo_field(self):
         """
-            REST Api: Test get list with dotted notation
+            REST Api: Test get list with dotted M-O related field
         """
         client = self.app.test_client()
         token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
@@ -889,9 +906,44 @@ class APITestCase(FABTestCase):
             {"field_string": "test0", "group": {"field_string": "test0"}},
         )
 
+    def test_get_list_om_field(self):
+        """
+            REST Api: Test get list with O-M related field
+        """
+        client = self.app.test_client()
+        token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
+
+        rv = self.auth_client_get(client, token, "api/v1/modelomparentapi/")
+        data = json.loads(rv.data.decode("utf-8"))
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(data["count"], MODEL1_DATA_SIZE)
+        self.assertEqual(len(data[API_RESULT_RES_KEY]), self.model1api.page_size)
+        expected_rel_field = [
+            {"field_string": f"text0.{i}", "id": i}
+            for i in range(1, MODELOMCHILD_DATA_SIZE)
+        ]
+        self.assertEqual(data[API_RESULT_RES_KEY][0]["children"], expected_rel_field)
+
+    def test_get_list_dotted_om_field(self):
+        """
+            REST Api: Test get list with dotted O-M related field
+        """
+        client = self.app.test_client()
+        token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
+
+        rv = self.auth_client_get(client, token, "api/v1/modeldottedomparentapi/")
+        data = json.loads(rv.data.decode("utf-8"))
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(data["count"], MODEL1_DATA_SIZE)
+        self.assertEqual(len(data[API_RESULT_RES_KEY]), self.model1api.page_size)
+        expected_rel_field = [
+            {"field_string": f"text0.{i}"} for i in range(1, MODELOMCHILD_DATA_SIZE)
+        ]
+        self.assertEqual(data[API_RESULT_RES_KEY][0]["children"], expected_rel_field)
+
     def test_get_list_dotted_mm_field(self):
         """
-            REST Api: Test get list with dotted N-N related field
+            REST Api: Test get list with dotted M-M related field
         """
         client = self.app.test_client()
         token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
@@ -903,15 +955,18 @@ class APITestCase(FABTestCase):
         rv = self.auth_client_get(client, token, uri)
         data = json.loads(rv.data.decode("utf-8"))
         self.assertEqual(rv.status_code, 200)
+        self.assertEqual(data["count"], MODEL2_DATA_SIZE)
+        self.assertEqual(len(data[API_RESULT_RES_KEY]), self.modeldottedmmapi.page_size)
         i = 0
         self.assertEqual(data[API_RESULT_RES_KEY][i]["field_string"], "0")
+        self.assertEqual(len(data[API_RESULT_RES_KEY][i]["children"]), 3)
         self.assertIn({"field_integer": 1}, data[API_RESULT_RES_KEY][i]["children"])
         self.assertIn({"field_integer": 2}, data[API_RESULT_RES_KEY][i]["children"])
         self.assertIn({"field_integer": 3}, data[API_RESULT_RES_KEY][i]["children"])
 
-    def test_get_list_dotted_order(self):
+    def test_get_list_dotted_mo_order(self):
         """
-            REST Api: Test get list and order dotted notation
+            REST Api: Test get list and order dotted M-O notation
         """
         client = self.app.test_client()
         token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
@@ -1856,6 +1911,57 @@ class APITestCase(FABTestCase):
         # Revert data changes
         insert_model1(self.appbuilder.get_session, i=pk - 1)
 
+    def test_update_item_custom_schema(self):
+        """
+            REST Api: Test update item custom schema
+        """
+        from .sqla.models import Model1CustomSchema
+
+        class Model1ApiCustomSchema(self.model1api):
+            edit_model_schema = Model1CustomSchema()
+
+        self.appbuilder.add_api(Model1ApiCustomSchema)
+
+        client = self.app.test_client()
+        token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
+        # Test custom validation item must start with a capital A
+        item = dict(
+            field_string=f"test{MODEL1_DATA_SIZE + 1}",
+            field_integer=MODEL1_DATA_SIZE + 1,
+            field_float=float(MODEL1_DATA_SIZE + 1),
+            field_date=None,
+        )
+        uri = "api/v1/model1apicustomschema/1"
+        rv = self.auth_client_put(client, token, uri, item)
+        self.assertEqual(rv.status_code, 422)
+        data = json.loads(rv.data.decode("utf-8"))
+        self.assertEqual(
+            data, {"message": {"field_string": ["Name must start with an A"]}}
+        )
+
+        # Test normal update with custom schema
+        item = dict(
+            field_string=f"Atest{MODEL1_DATA_SIZE + 1}",
+            field_integer=MODEL1_DATA_SIZE + 1,
+            field_float=float(MODEL1_DATA_SIZE + 1),
+            field_date=None,
+        )
+        uri = "api/v1/model1apicustomschema/1"
+        rv = self.auth_client_put(client, token, uri, item)
+        self.assertEqual(rv.status_code, 200)
+
+        model = (
+            self.db.session.query(Model1)
+            .filter_by(field_string="Atest{}".format(MODEL1_DATA_SIZE + 1))
+            .first()
+        )
+        self.assertEqual(model.field_string, f"Atest{MODEL1_DATA_SIZE + 1}")
+        self.assertEqual(model.field_integer, MODEL1_DATA_SIZE + 1)
+        self.assertEqual(model.field_float, float(MODEL1_DATA_SIZE + 1))
+
+        # Revert data changes
+        insert_model1(self.appbuilder.get_session, i=0)
+
     def test_update_item_base_filters(self):
         """
             REST Api: Test update item with base filters
@@ -2011,7 +2117,7 @@ class APITestCase(FABTestCase):
             .one_or_none()
         )
         pk = model1.id
-        item = dict(field_string="test_Put", field_integer=1000)
+        item = dict(field_string="test_Put")
         uri = f"api/v1/model1apiexcludecols/{pk}"
         rv = self.auth_client_put(client, token, uri, item)
         self.assertEqual(rv.status_code, 200)
@@ -2019,6 +2125,15 @@ class APITestCase(FABTestCase):
         self.assertEqual(model.field_integer, 0)
         self.assertEqual(model.field_float, 0.0)
         self.assertEqual(model.field_date, None)
+        self.assertEqual(model.field_string, "test_Put")
+
+        item = dict(field_string="test_Put", field_integer=1000)
+        uri = f"api/v1/model1apiexcludecols/{pk}"
+        rv = self.auth_client_put(client, token, uri, item)
+        data = json.loads(rv.data.decode("utf-8"))
+        self.assertEqual(rv.status_code, 422)
+        expected_response = {"message": {"field_integer": ["Unknown field."]}}
+        self.assertEqual(expected_response, data)
 
         # Revert data changes
         insert_model1(self.appbuilder.get_session, i=pk - 1)
@@ -2121,19 +2236,44 @@ class APITestCase(FABTestCase):
 
         client = self.app.test_client()
         token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
+        # Test custom validation item must start with a capital A
         item = dict(
             field_string=f"test{MODEL1_DATA_SIZE + 1}",
             field_integer=MODEL1_DATA_SIZE + 1,
             field_float=float(MODEL1_DATA_SIZE + 1),
             field_date=None,
         )
-        uri = "api/v1/model1customvalidationapi/"
+        uri = "api/v1/model1apicustomschema/"
         rv = self.auth_client_post(client, token, uri, item)
         data = json.loads(rv.data.decode("utf-8"))
         self.assertEqual(rv.status_code, 422)
         self.assertEqual(
             data, {"message": {"field_string": ["Name must start with an A"]}}
         )
+
+        item = dict(
+            field_string=f"Atest{MODEL1_DATA_SIZE + 1}",
+            field_integer=MODEL1_DATA_SIZE + 1,
+            field_float=float(MODEL1_DATA_SIZE + 1),
+            field_date=None,
+        )
+        uri = "api/v1/model1apicustomschema/"
+        rv = self.auth_client_post(client, token, uri, item)
+        data = json.loads(rv.data.decode("utf-8"))
+        self.assertEqual(rv.status_code, 201)
+
+        model = (
+            self.db.session.query(Model1)
+            .filter_by(field_string="Atest{}".format(MODEL1_DATA_SIZE + 1))
+            .first()
+        )
+        self.assertEqual(model.field_string, f"Atest{MODEL1_DATA_SIZE + 1}")
+        self.assertEqual(model.field_integer, MODEL1_DATA_SIZE + 1)
+        self.assertEqual(model.field_float, float(MODEL1_DATA_SIZE + 1))
+
+        # Revert data changes
+        self.appbuilder.get_session.delete(model)
+        self.appbuilder.get_session.commit()
 
     def test_create_item_val_size(self):
         """
@@ -2193,12 +2333,6 @@ class APITestCase(FABTestCase):
         uri = "api/v1/model1apiexcludecols/"
         rv = self.auth_client_post(client, token, uri, item)
         self.assertEqual(rv.status_code, 201)
-        item = dict(
-            field_string="test{}".format(MODEL1_DATA_SIZE + 2),
-            field_integer=MODEL1_DATA_SIZE + 2,
-        )
-        rv = self.auth_client_post(client, token, uri, item)
-        self.assertEqual(rv.status_code, 201)
         model = (
             self.db.session.query(Model1)
             .filter_by(field_string=f"test{MODEL1_DATA_SIZE + 1}")
@@ -2207,6 +2341,16 @@ class APITestCase(FABTestCase):
         self.assertEqual(model.field_integer, None)
         self.assertEqual(model.field_float, None)
         self.assertEqual(model.field_date, None)
+
+        item = dict(
+            field_string="test{}".format(MODEL1_DATA_SIZE + 2),
+            field_integer=MODEL1_DATA_SIZE + 2,
+        )
+        rv = self.auth_client_post(client, token, uri, item)
+        self.assertEqual(rv.status_code, 422)
+        data = json.loads(rv.data.decode("utf-8"))
+        expected_response = {"message": {"field_integer": ["Unknown field."]}}
+        self.assertEqual(data, expected_response)
 
         # Revert test data
         self.appbuilder.get_session.query(Model1).filter_by(
@@ -2357,6 +2501,26 @@ class APITestCase(FABTestCase):
             item = data[API_RESULT_RES_KEY][i - 1]
             self.assertEqual(item["custom_property"], f"{item['field_string']}_custom")
 
+    def test_get_list_col_callable(self):
+        """
+            REST Api: Test get list of objects with columns as callable
+        """
+        client = self.app.test_client()
+        token = self.login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
+        uri = "api/v1/model2callablecolapi/"
+        rv = self.auth_client_get(client, token, uri)
+        self.assertEqual(rv.status_code, 200)
+        data = json.loads(rv.data.decode("utf-8"))
+        # Tests count property
+        self.assertEqual(data["count"], MODEL1_DATA_SIZE)
+        # Tests data result default page size
+        self.assertEqual(len(data[API_RESULT_RES_KEY]), self.model1api.page_size)
+        results = data[API_RESULT_RES_KEY]
+        for i, item in enumerate(results):
+            self.assertEqual(
+                item["field_method"], f"{item['field_string']}_field_method"
+            )
+
     def test_openapi(self):
         """
             REST Api: Test OpenAPI spec
@@ -2373,7 +2537,7 @@ class APITestCase(FABTestCase):
         """
         client = self.app.test_client()
         self.browser_login(client, USERNAME_ADMIN, PASSWORD_ADMIN)
-        uri = "swaggerview/v1"
+        uri = "swagger/v1"
         rv = client.get(uri)
         self.assertEqual(rv.status_code, 200)
 
